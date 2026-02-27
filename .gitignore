@@ -1,0 +1,19 @@
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Logs
+*.log
+
+# Roblox build outputs (si tu génères des builds)
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# Secrets
+.env
+.env.*

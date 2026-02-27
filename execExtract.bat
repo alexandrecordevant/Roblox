@@ -1,0 +1,1 @@
+python "extract_rlbx_script.py" "C:\Users\Admin\Documents\Developpement\Roblox\towerpower.rbxlx" "C:\Users\Admin\Documents\Developpement\Roblox\projects\towerpower\src"
