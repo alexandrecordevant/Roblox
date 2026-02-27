@@ -10,7 +10,12 @@
 
     "ServerScriptService": {
       "$className": "ServerScriptService",
-      "$path": "src/Server"
+      "$path": "src/ServerScriptService"
+    },
+
+    "Workspace": {
+      "$className": "Workspace",
+      "$path": "src/Workspace"
     },
 
     "StarterPlayer": {
