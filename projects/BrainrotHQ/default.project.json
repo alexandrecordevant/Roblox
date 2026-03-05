@@ -1,0 +1,38 @@
+{
+  "name": "BrainrotHQ",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Modules": {
+        "$className": "Folder",
+        "Config": {
+          "$path": "src/ReplicatedStorage/Modules/Config.lua"
+        }
+      }
+    },
+    "ServerScriptService": {
+      "Main": {
+        "$path": "src/ServerScriptService/Main.server.lua"
+      },
+      "DataFetcher": {
+        "$path": "src/ServerScriptService/DataFetcher.lua"
+      },
+      "VoteManager": {
+        "$path": "src/ServerScriptService/VoteManager.lua"
+      },
+      "MonetizationHandler": {
+        "$path": "src/ServerScriptService/MonetizationHandler.lua"
+      },
+      "TeleportHandler": {
+        "$path": "src/ServerScriptService/TeleportHandler.lua"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "HubController": {
+          "$path": "src/StarterPlayerScripts/HubController.client.lua"
+        }
+      }
+    }
+  }
+}
