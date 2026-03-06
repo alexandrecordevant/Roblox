@@ -246,12 +246,9 @@ function DataFetcher.formaterClassement(topN)
     local lignes = {}
     for i = 1, math.min(topN or 8, #data) do
         local j = data[i]
-        table.insert(lignes, string.format(
-            "#%d  %s\n     %s  👥%d  👍%d%%",
-            j.rang, j.nom, j.statut, j.joueurs, j.likeRatio
-        ))
+        table.insert(lignes, string.format("#%d  %s  %s", j.rang, j.nom, j.statut))
     end
-    return table.concat(lignes, "\n\n")
+    return table.concat(lignes, "\n")
 end
 
 -- Texte stats pour Board VIP (jeu #1 détaillé)
@@ -263,8 +260,13 @@ function DataFetcher.formaterStatsVIP()
         and string.format("%.1fM", j.visites / 1000000)
         or  tostring(j.visites)
     return string.format(
-        "🏆 JEU #1 CETTE SEMAINE\n\n%s\n\n📊 Score Radar : %.2f\n👥 %d joueurs actifs\n👍 %d%% likes\n🎮 %s visites\n\n%s",
-        j.nom, j.score, j.joueurs, j.likeRatio, visitesStr, j.statut
+        "🏆 #1  %s\nScore : %.2f\n👥 %s joueurs\n👍 %d%% likes\n🎮 %s visites\n%s",
+        j.nom,
+        j.score,
+        string.format("%d", j.joueurs):reverse():gsub("(%d%d%d)", "%1 "):reverse():gsub("^ ", ""),
+        j.likeRatio,
+        visitesStr,
+        j.statut
     )
 end
 
