@@ -41,12 +41,10 @@ function TeleportHandler.mettreAJourPortails(jeux)
 
             -- Changer la couleur du portail selon le statut
             local couleur = Config.Couleurs.Muted
-            if jeu.statut == "VIRAL" then
+            if string.find(jeu.statut, "VIRAL") then
                 couleur = Config.Couleurs.Primaire   -- Rouge néon
-            elseif jeu.statut == "WATCH" then
+            elseif string.find(jeu.statut, "HOT") then
                 couleur = Config.Couleurs.Accent     -- Jaune néon
-            else
-                couleur = Config.Couleurs.Muted
             end
 
             -- Appliquer la couleur au portail et ses enfants

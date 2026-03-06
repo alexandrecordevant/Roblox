@@ -62,7 +62,7 @@ local function mettreAJourEcrans()
     local function rebuilderBillboard(bb, texte, couleurTexte)
         -- Taille et position
         bb.Size         = UDim2.new(5, 0, 3, 0)
-        bb.StudsOffset  = Vector3.new(0, 6, 0)
+        bb.StudsOffset  = Vector3.new(0, 12, 0)
 
         -- Supprimer les anciens enfants (Rang, Title, Score, Info, fond)
         for _, enfant in ipairs(bb:GetChildren()) do
