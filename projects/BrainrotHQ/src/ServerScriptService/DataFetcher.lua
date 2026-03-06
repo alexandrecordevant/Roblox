@@ -270,6 +270,30 @@ function DataFetcher.formaterStatsVIP()
     )
 end
 
+-- Texte compact pour BillboardGui au-dessus d'un portail
+function DataFetcher.formaterPortail(rang)
+    local data = DataFetcher.getCache()
+    local j = data[rang]
+    if not j then return "" end
+
+    -- Abréviation joueurs : 15640 → "15K", 1200 → "1.2K", 800 → "800"
+    local joueursStr
+    if j.joueurs >= 10000 then
+        joueursStr = math.floor(j.joueurs / 1000) .. "K"
+    elseif j.joueurs >= 1000 then
+        joueursStr = string.format("%.1fK", j.joueurs / 1000)
+    else
+        joueursStr = tostring(j.joueurs)
+    end
+
+    local emoji = j.statut:match("^(%S+)")  -- premier token (emoji)
+    return string.format("#%d\n%s\n%s %.2f • %s",
+        j.rang,
+        string.sub(j.nom, 1, 16),
+        emoji, j.score, joueursStr
+    )
+end
+
 -- ------------------------------------------------------------
 -- AUTO-REFRESH toutes les 5 minutes
 -- ------------------------------------------------------------
