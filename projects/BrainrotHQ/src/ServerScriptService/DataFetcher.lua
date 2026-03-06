@@ -7,6 +7,9 @@
 
 local HttpService = game:GetService("HttpService")
 
+-- Proxy Cloudflare Worker (Roblox bloque les appels directs à *.roblox.com)
+local PROXY = "https://roblox-proxy.getrewardfr.workers.dev"
+
 local DataFetcher = {}
 
 -- ------------------------------------------------------------
@@ -66,7 +69,7 @@ end
 -- Retourne un tableau de { universeId, nom, joueurs, visites, rootPlaceId }
 -- ------------------------------------------------------------
 local function fetchTop100()
-    local url = "https://games.roblox.com/v1/games/list?sortToken=CuratedGames&maxRows=100"
+    local url = PROXY .. "/v1/games/list?sortToken=CuratedGames&maxRows=100"
     local ok, response = pcall(function()
         return HttpService:GetAsync(url, true)
     end)
@@ -100,7 +103,7 @@ end
 -- ------------------------------------------------------------
 local function fetchVotes(universeIds)
     if #universeIds == 0 then return {} end
-    local url = "https://games.roblox.com/v1/games/votes?universeIds=" .. table.concat(universeIds, ",")
+    local url = PROXY .. "/v1/games/votes?universeIds=" .. table.concat(universeIds, ",")
     local ok, response = pcall(function()
         return HttpService:GetAsync(url, true)
     end)
