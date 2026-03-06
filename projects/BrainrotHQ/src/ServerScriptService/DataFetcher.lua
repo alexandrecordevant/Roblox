@@ -1,233 +1,250 @@
 -- ============================================================
--- DataFetcher.lua — BrainRot Radar Hub
+-- DataFetcher.lua — BrainRot HQ v2
+-- API Roblox native — zéro Google Sheet, 100% automatique
 -- ModuleScript → ServerScriptService
--- Rôle : fetch CSV Google Sheet → parse → calcul Score Radar → cache DataStore
 -- ============================================================
+
+local HttpService = game:GetService("HttpService")
+local Config = require(game.ReplicatedStorage.Modules.Config)
 
 local DataFetcher = {}
 
-local HttpService    = game:GetService("HttpService")
-local DataStoreService = game:GetService("DataStoreService")
-local Config         = require(game.ReplicatedStorage.Modules.Config)
-
--- Cache en mémoire (évite les appels DataStore inutiles)
-local cacheData      = {}
-local dernierFetch   = 0
-
--- DataStore pour persister le cache entre redémarrages serveur
-local cacheStore     = DataStoreService:GetDataStore("BrainRotRadar_Cache_v1")
-local boostStore     = DataStoreService:GetDataStore(Config.Leaderboard.DataStoreBoosts)
+-- ------------------------------------------------------------
+-- LISTE DES JEUX À TRACKER
+-- Seule chose à mettre à jour manuellement (1x/mois max)
+-- UniverseId ≠ PlaceId — trouver sur roblox.com/games/PLACEID
+-- Clic droit sur un jeu → "Copy Universe ID" dans Studio
+-- ------------------------------------------------------------
+local JEUX_TRACKED = {
+    { universeId = 3233893879, nom = "Skibidi Obby" },
+    { universeId = 4922741943, nom = "Fanum Tax Obby" },
+    { universeId = 5094069760, nom = "Sigma Obby" },
+    { universeId = 4372543374, nom = "Brain Rot Run" },
+    { universeId = 3260590327, nom = "Toilet Tower Defense" },
+    { universeId = 4924922148, nom = "Rizz Obby" },
+    { universeId = 5108494873, nom = "Gyatt Obby" },
+    { universeId = 4490140733, nom = "Grimace Shake Obby" },
+    { universeId = 4482558690, nom = "Phonk Obby" },
+    { universeId = 3698890740, nom = "UNO" },
+    { universeId = 4372543374, nom = "Mewing Obby" },
+    { universeId = 3260590327, nom = "Ohio Rizz Obby" },
+}
 
 -- ------------------------------------------------------------
--- PARSE CSV
--- Format attendu : Jeu,Joueurs,Joueurs_24h,Likes,Dislikes,GameId
--- Ligne 1 = headers (skippée)
+-- CACHE
 -- ------------------------------------------------------------
-local function parseCSV(csvText)
-    local jeux = {}
-    local lignes = csvText:split("\n")
+local cache          = {}
+local cacheTimestamp = 0
+local CACHE_TTL      = 300  -- 5 minutes
 
-    for i = 2, #lignes do -- skip header
-        local ligne = lignes[i]:gsub("\r", ""):gsub('"', '')
-        if ligne ~= "" then
-            local cols = ligne:split(",")
-            if #cols >= 5 then
-                local jeu = {
-                    nom        = cols[1] or "?",
-                    joueurs    = tonumber(cols[2]) or 0,
-                    joueurs24h = tonumber(cols[3]) or 0,
-                    likes      = tonumber(cols[4]) or 0,
-                    dislikes   = tonumber(cols[5]) or 0,
-                    gameId     = tonumber(cols[6]) or 0,
-                }
-                -- Validation basique
-                if jeu.nom ~= "?" and jeu.nom ~= "" then
-                    table.insert(jeux, jeu)
-                end
-            end
-        end
+-- ------------------------------------------------------------
+-- FETCH JOUEURS ACTIFS + INFOS
+-- GET https://games.roblox.com/v1/games?universeIds=X,Y,Z
+-- ------------------------------------------------------------
+local function fetchJoueursActifs(universeIds)
+    local url = "https://games.roblox.com/v1/games?universeIds=" .. table.concat(universeIds, ",")
+    local ok, response = pcall(function()
+        return HttpService:GetAsync(url, true)
+    end)
+    if not ok then
+        warn("[DataFetcher] Erreur fetch joueurs : " .. tostring(response))
+        return {}
     end
+    local okJson, data = pcall(function() return HttpService:JSONDecode(response) end)
+    if not okJson or not data or not data.data then return {} end
 
-    return jeux
+    local result = {}
+    for _, jeu in ipairs(data.data) do
+        result[tostring(jeu.id)] = {
+            joueurs     = jeu.playing or 0,
+            visites     = jeu.visits or 0,
+            rootPlaceId = jeu.rootPlaceId or 0,
+        }
+    end
+    return result
+end
+
+-- ------------------------------------------------------------
+-- FETCH VOTES
+-- GET https://games.roblox.com/v1/games/votes?universeIds=X,Y,Z
+-- ------------------------------------------------------------
+local function fetchVotes(universeIds)
+    local url = "https://games.roblox.com/v1/games/votes?universeIds=" .. table.concat(universeIds, ",")
+    local ok, response = pcall(function()
+        return HttpService:GetAsync(url, true)
+    end)
+    if not ok then return {} end
+    local okJson, data = pcall(function() return HttpService:JSONDecode(response) end)
+    if not okJson or not data or not data.data then return {} end
+
+    local result = {}
+    for _, vote in ipairs(data.data) do
+        result[tostring(vote.id)] = {
+            upVotes   = vote.upVotes or 0,
+            downVotes = vote.downVotes or 0,
+        }
+    end
+    return result
 end
 
 -- ------------------------------------------------------------
 -- CALCUL SCORE RADAR
--- Score = (Variation% × 3) + (LikeRatio × 2)
+-- Score sur 10 :
+--   Joueurs actifs  → 5 pts max  (saturé à 1000 joueurs)
+--   Like ratio      → 3 pts max
+--   Visites totales → 2 pts max  (saturé à 1M visites)
 -- ------------------------------------------------------------
-local function calculerScore(jeu)
-    local total = jeu.likes + jeu.dislikes
-    local likeRatio = total > 0 and (jeu.likes / total) or 0.5
-
-    local variation = jeu.joueurs24h > 0
-        and ((jeu.joueurs - jeu.joueurs24h) / jeu.joueurs24h)
-        or 0
-
-    local score = (variation * 3) + (likeRatio * 2)
-    return math.round(score * 100) / 100, math.round(likeRatio * 100), math.round(variation * 100)
+local function calculerScore(joueurs, upVotes, downVotes, visites)
+    local scoreJoueurs = math.min(joueurs / 1000, 1) * 5
+    local totalVotes   = upVotes + downVotes
+    local likeRatio    = totalVotes > 0 and (upVotes / totalVotes) or 0.5
+    local scoreLikes   = likeRatio * 3
+    local scoreVisites = math.min(visites / 1000000, 1) * 2
+    return math.floor((scoreJoueurs + scoreLikes + scoreVisites) * 100) / 100
 end
 
--- ------------------------------------------------------------
--- APPLIQUER LES BOOSTS ACTIFS
--- Les devs qui ont acheté "Boost" voient leur score augmenter
--- ------------------------------------------------------------
-local function appliquerBoosts(jeux)
-    local ok, boostsData = pcall(function()
-        return boostStore:GetAsync("active_boosts")
-    end)
-
-    if not ok or not boostsData then return jeux end
-
-    local maintenant = os.time()
-
-    for _, jeu in ipairs(jeux) do
-        local cleBoost = "boost_" .. jeu.nom:lower():gsub("%s+", "_")
-        local boost = boostsData[cleBoost]
-
-        if boost and boost.expireAt > maintenant then
-            jeu.score = jeu.score + Config.Produits.Boost.BonusScore
-            jeu.boosted = true
-        end
-    end
-
-    return jeux
-end
-
--- ------------------------------------------------------------
--- DÉTERMINER LE STATUT
--- ------------------------------------------------------------
 local function getStatut(score)
-    if score >= 2.5 then return "VIRAL", "🚀"
-    elseif score >= 1.5 then return "WATCH", "🟡"
-    else return "WEAK", "❌"
-    end
+    if score >= 7 then return "🔥 VIRAL"
+    elseif score >= 5 then return "📈 HOT"
+    elseif score >= 3 then return "➡️ STABLE"
+    else return "📉 WEAK" end
 end
 
 -- ------------------------------------------------------------
--- FETCH PRINCIPAL
--- Appelé par Main.server.lua au démarrage et toutes les X minutes
+-- FETCH COMPLET
 -- ------------------------------------------------------------
-function DataFetcher.fetch()
-    local maintenant = os.time()
+local function fetchAll()
+    print("[DataFetcher] 🔄 Fetch API Roblox...")
 
-    -- Vérifier si le cache en mémoire est encore frais
-    if maintenant - dernierFetch < Config.FetchInterval and #cacheData > 0 then
-        return cacheData, nil
-    end
-
-    -- Vérifier si URL configurée
-    if Config.SheetCSV_URL == "REMPLACE_PAR_TON_URL_CSV" then
-        warn("[DataFetcher] URL Sheet non configurée — utilisation données démo")
-        return DataFetcher.getDemoData(), nil
-    end
-
-    -- Fetch HTTP
-    local ok, result = pcall(function()
-        return HttpService:GetAsync(Config.SheetCSV_URL, true)
-    end)
-
-    if not ok then
-        warn("[DataFetcher] Erreur HTTP :", result)
-        -- Retourner le cache DataStore si disponible
-        local okDS, cached = pcall(function()
-            return cacheStore:GetAsync("last_data")
-        end)
-        if okDS and cached and #cached > 0 then
-            return cached, "cache"
+    local universeIds = {}
+    local idToConfig  = {}
+    for _, jeu in ipairs(JEUX_TRACKED) do
+        local idStr = tostring(jeu.universeId)
+        -- Éviter doublons
+        local deja = false
+        for _, id in ipairs(universeIds) do
+            if id == idStr then deja = true break end
         end
-        return DataFetcher.getDemoData(), "erreur"
+        if not deja then
+            table.insert(universeIds, idStr)
+            idToConfig[idStr] = jeu
+        end
     end
 
-    -- Parsing
-    local jeux = parseCSV(result)
+    local joueursData = fetchJoueursActifs(universeIds)
+    local votesData   = fetchVotes(universeIds)
 
-    if #jeux == 0 then
-        warn("[DataFetcher] Sheet vide ou mal formaté")
-        return cacheData, "vide"
+    local resultats = {}
+    for idStr, config in pairs(idToConfig) do
+        local jData = joueursData[idStr] or {}
+        local vData = votesData[idStr]   or {}
+
+        local joueurs   = jData.joueurs or 0
+        local visites   = jData.visites or 0
+        local upVotes   = vData.upVotes or 0
+        local downVotes = vData.downVotes or 0
+        local totalV    = upVotes + downVotes
+        local likeRatio = totalV > 0 and math.floor((upVotes / totalV) * 100) or 50
+
+        table.insert(resultats, {
+            universeId  = config.universeId,
+            gameId      = jData.rootPlaceId or 0,
+            nom         = config.nom,
+            joueurs     = joueurs,
+            visites     = visites,
+            upVotes     = upVotes,
+            downVotes   = downVotes,
+            likeRatio   = likeRatio,
+            score       = calculerScore(joueurs, upVotes, downVotes, visites),
+            statut      = "",  -- rempli après sort
+        })
     end
 
-    -- Calcul scores
-    for _, jeu in ipairs(jeux) do
-        jeu.score, jeu.likeRatio, jeu.variationPct = calculerScore(jeu)
-        jeu.statut, jeu.emoji = getStatut(jeu.score)
-        jeu.boosted = false
+    -- Trier par score
+    table.sort(resultats, function(a, b) return a.score > b.score end)
+
+    -- Rang + statut
+    for i, r in ipairs(resultats) do
+        r.rang   = i
+        r.statut = getStatut(r.score)
     end
 
-    -- Appliquer boosts
-    jeux = appliquerBoosts(jeux)
+    cache          = resultats
+    cacheTimestamp = tick()
 
-    -- Trier par score décroissant
-    table.sort(jeux, function(a, b) return a.score > b.score end)
-
-    -- Ajouter le rang
-    for i, jeu in ipairs(jeux) do
-        jeu.rang = i
+    local top = resultats[1]
+    if top then
+        print(string.format("[DataFetcher] ✅ %d jeux — #1 : %s (score %.2f, %d joueurs)",
+            #resultats, top.nom, top.score, top.joueurs))
     end
 
-    -- Mettre à jour cache mémoire
-    cacheData = jeux
-    dernierFetch = maintenant
-
-    -- Persister dans DataStore (sans bloquer)
-    task.spawn(function()
-        pcall(function()
-            cacheStore:SetAsync("last_data", jeux)
-        end)
-    end)
-
-    return jeux, nil
+    return resultats
 end
 
 -- ------------------------------------------------------------
--- GETTER CACHE (sans re-fetch)
+-- API PUBLIQUE
 -- ------------------------------------------------------------
 function DataFetcher.getCache()
-    return cacheData
-end
-
--- ------------------------------------------------------------
--- DONNÉES DÉMO (fallback si Sheet non configuré)
--- ------------------------------------------------------------
-function DataFetcher.getDemoData()
-    local demo = {
-        { nom = "Skibidi Obby Impossible", joueurs = 1842, joueurs24h = 1320, likes = 4200, dislikes = 380,  gameId = 0 },
-        { nom = "Brainrot Tower Escape",   joueurs = 3210, joueurs24h = 2100, likes = 8900, dislikes = 1200, gameId = 0 },
-        { nom = "Sigma Obby Challenge",    joueurs = 590,  joueurs24h = 612,  likes = 1100, dislikes = 280,  gameId = 0 },
-        { nom = "Fanum Tax Parkour",       joueurs = 2780, joueurs24h = 1890, likes = 6200, dislikes = 900,  gameId = 0 },
-        { nom = "Ohio Rizz Obby",          joueurs = 420,  joueurs24h = 490,  likes = 810,  dislikes = 320,  gameId = 0 },
-        { nom = "Italian Brainrot Race",   joueurs = 1120, joueurs24h = 680,  likes = 2900, dislikes = 410,  gameId = 0 },
-        { nom = "NPC Obby 100 Levels",     joueurs = 4450, joueurs24h = 3200, likes = 11200, dislikes = 1800, gameId = 0 },
-        { nom = "Gyatt Escape Room",       joueurs = 230,  joueurs24h = 260,  likes = 420,  dislikes = 190,  gameId = 0 },
-    }
-
-    for i, jeu in ipairs(demo) do
-        jeu.score, jeu.likeRatio, jeu.variationPct = calculerScore(jeu)
-        jeu.statut, jeu.emoji = getStatut(jeu.score)
-        jeu.boosted = false
-        jeu.rang = i
+    if tick() - cacheTimestamp > CACHE_TTL or #cache == 0 then
+        fetchAll()
     end
+    return cache
+end
 
-    table.sort(demo, function(a, b) return a.score > b.score end)
-    for i, jeu in ipairs(demo) do jeu.rang = i end
+function DataFetcher.refresh()
+    return fetchAll()
+end
 
-    return demo
+function DataFetcher.getByRang(rang)
+    return DataFetcher.getCache()[rang]
+end
+
+-- Texte classement pour Board Normal (top N)
+function DataFetcher.formaterClassement(topN)
+    local data   = DataFetcher.getCache()
+    local lignes = {}
+    for i = 1, math.min(topN or 8, #data) do
+        local j = data[i]
+        table.insert(lignes, string.format(
+            "#%d  %s\n     %s  👥%d  👍%d%%",
+            j.rang, j.nom, j.statut, j.joueurs, j.likeRatio
+        ))
+    end
+    return table.concat(lignes, "\n\n")
+end
+
+-- Texte stats pour Board VIP (jeu #1 détaillé)
+function DataFetcher.formaterStatsVIP()
+    local data = DataFetcher.getCache()
+    if #data == 0 then return "Données indisponibles" end
+    local j = data[1]
+    local visitesStr = j.visites >= 1000000
+        and string.format("%.1fM", j.visites / 1000000)
+        or  tostring(j.visites)
+    return string.format(
+        "🏆 JEU #1 CETTE SEMAINE\n\n%s\n\n📊 Score Radar : %.2f\n👥 %d joueurs actifs\n👍 %d%% likes\n🎮 %s visites\n\n%s",
+        j.nom, j.score, j.joueurs, j.likeRatio, visitesStr, j.statut
+    )
 end
 
 -- ------------------------------------------------------------
--- ENREGISTRER UN BOOST (appelé par MonetizationHandler)
+-- AUTO-REFRESH toutes les 5 minutes
 -- ------------------------------------------------------------
-function DataFetcher.enregistrerBoost(nomJeu, dureHeures)
-    local cleBoost = "boost_" .. nomJeu:lower():gsub("%s+", "_")
-    local expireAt = os.time() + (dureHeures * 3600)
+task.spawn(function()
+    task.wait(3)  -- laisser Main.server créer les RemoteEvents
+    fetchAll()
 
-    pcall(function()
-        local boostsData = boostStore:GetAsync("active_boosts") or {}
-        boostsData[cleBoost] = { expireAt = expireAt, nom = nomJeu }
-        boostStore:SetAsync("active_boosts", boostsData)
-    end)
+    while true do
+        task.wait(CACHE_TTL)
+        local data = fetchAll()
 
-    -- Invalider le cache pour forcer re-calcul
-    dernierFetch = 0
-end
+        -- Notifier tous les clients pour maj écrans
+        local remotes = game.ReplicatedStorage:FindFirstChild("RadarEvents")
+        if remotes then
+            local ev = remotes:FindFirstChild("DataUpdate")
+            if ev then ev:FireAllClients(data) end
+        end
+    end
+end)
 
 return DataFetcher
