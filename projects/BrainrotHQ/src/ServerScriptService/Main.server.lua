@@ -90,13 +90,9 @@ TeleportHandler.setupPortails()
 -- PREMIER FETCH AU DÉMARRAGE
 -- ------------------------------------------------------------
 local function fetchEtDiffuser()
-    local jeux, statut = DataFetcher.fetch()
+    local jeux = DataFetcher.refresh()
 
-    if statut == "erreur" then
-        warn("[Main] Erreur fetch — données de fallback utilisées")
-    end
-
-    if #jeux == 0 then
+    if not jeux or #jeux == 0 then
         warn("[Main] Aucune donnée disponible")
         return
     end
