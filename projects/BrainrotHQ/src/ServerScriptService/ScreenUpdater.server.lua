@@ -58,40 +58,49 @@ local function mettreAJourEcrans()
         end
     end
 
+    -- Utilitaire : récupère ou crée un TextLabel "Info" dans un BillboardGui
+    local function getOrCreateInfo(bb)
+        local info = bb:FindFirstChild("Info")
+        if not info then
+            info = Instance.new("TextLabel")
+            info.Name                = "Info"
+            info.Size                = UDim2.new(1, 0, 1, 0)
+            info.BackgroundTransparency = 1
+            info.TextScaled          = true
+            info.Font                = Enum.Font.GothamBold
+            info.TextColor3          = Color3.new(1, 1, 1)
+            info.TextXAlignment      = Enum.TextXAlignment.Center
+            info.Parent              = bb
+        end
+        return info
+    end
+
     -- Mettre à jour les billboards des portails normaux
     local portalsFolder = workspace:FindFirstChild("Portals")
     if portalsFolder then
-        local data = DataFetcher.getCache()
         for i = 1, 8 do
             local portal = portalsFolder:FindFirstChild("Portal_"..i)
             if portal then
-                local bb    = portal:FindFirstChildOfClass("BillboardGui")
-                local jeu   = data[i]
-                if bb and jeu then
-                    local titleL = bb:FindFirstChild("Title")
-                    local scoreL = bb:FindFirstChild("Score")
-                    if titleL then titleL.Text = jeu.nom end
-                    if scoreL then scoreL.Text = jeu.statut.."  "..jeu.score end
+                local bb = portal:FindFirstChildOfClass("BillboardGui")
+                if bb then
+                    local info = getOrCreateInfo(bb)
+                    info.Text = DataFetcher.formaterPortail(i)
                 end
             end
         end
     end
 
     -- Mettre à jour les billboards des portails VIP
-    local vipFolder     = areneFolder:FindFirstChild("ZoneVIP")
-    local vipPortals    = vipFolder and vipFolder:FindFirstChild("PortailsVIP")
+    local vipFolder  = areneFolder:FindFirstChild("ZoneVIP")
+    local vipPortals = vipFolder and vipFolder:FindFirstChild("PortailsVIP")
     if vipPortals then
-        local data = DataFetcher.getCache()
         for i = 1, 8 do
             local portal = vipPortals:FindFirstChild("PortalVIP_"..i)
             if portal then
-                local bb  = portal:FindFirstChildOfClass("BillboardGui")
-                local jeu = data[i]
-                if bb and jeu then
-                    local titleL = bb:FindFirstChild("Title")
-                    local scoreL = bb:FindFirstChild("Score")
-                    if titleL then titleL.Text = jeu.nom end
-                    if scoreL then scoreL.Text = "⭐ "..jeu.score.."  👥"..jeu.joueurs end
+                local bb = portal:FindFirstChildOfClass("BillboardGui")
+                if bb then
+                    local info = getOrCreateInfo(bb)
+                    info.Text = DataFetcher.formaterPortail(i)
                 end
             end
         end
