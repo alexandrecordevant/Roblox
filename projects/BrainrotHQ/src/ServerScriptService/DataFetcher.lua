@@ -1,7 +1,7 @@
 -- ============================================================
--- DataFetcher.lua — BrainRot HQ v3
--- 100% automatique — zéro liste en dur
--- Fetch top 100 jeux Roblox → filtre Brain Rot → Top 16
+-- DataFetcher.lua — BrainRot HQ v4
+-- Liste Brain Rot scrappée depuis roblox.com/discover
+-- Stats (joueurs, visites, votes) récupérées en temps réel
 -- ModuleScript → ServerScriptService
 -- ============================================================
 
@@ -10,15 +10,52 @@ local HttpService = game:GetService("HttpService")
 -- Proxy Cloudflare Worker (Roblox bloque les appels directs à *.roblox.com)
 local PROXY = "https://roblox-proxy.getrewardfr.workers.dev"
 
-local DataFetcher = {}
-
 -- ------------------------------------------------------------
--- MOTS-CLÉS BRAIN ROT (filtre insensible à la casse)
+-- LISTE BRAIN ROT — scrappée depuis roblox.com/discover
+-- Mettre à jour via le script scrape_brainrot.mjs (Node.js)
+-- Le nom ici est un fallback ; le vrai nom vient de l'API
 -- ------------------------------------------------------------
-local KEYWORDS = {
-    "brainrot", "brain rot", "skibidi", "fanum", "sigma", "ohio", "rizz",
-    "gyatt", "mewing", "grimace", "phonk", "italian", "toilet", "hawk tuah",
-    "lockjaw", "tralalero", "bombardiro", "tung tung", "sussy",
+local JEUX_TRACKED = {
+    { universeId = 7709344486, nom = "Steal a Brainrot" },
+    { universeId = 9363735110, nom = "Escape Tsunami For Brainrots!" },
+    { universeId = 9753814298, nom = "Swing Obby for Brainrots!" },
+    { universeId = 9649298941, nom = "Survive LAVA for Brainrots!" },
+    { universeId = 9706113201, nom = "Brainrot Laboratory" },
+    { universeId = 9715909786, nom = "Jump To Steal Lucky Blocks" },
+    { universeId = 9710064812, nom = "Fly for Brainrots!" },
+    { universeId = 9712933917, nom = "Get Tall For Brainrots" },
+    { universeId = 9704343971, nom = "Grow Beanstalk For Brainrots!" },
+    { universeId = 9695620503, nom = "Reel a Brainrot!" },
+    { universeId = 9745497386, nom = "Jump and Escape Brainrots" },
+    { universeId = 9671940985, nom = "Run For Brainrots!" },
+    { universeId = 9626728130, nom = "Speed Escape for Brainrots!" },
+    { universeId = 9570888371, nom = "Jump for Brainrots!" },
+    { universeId = 9681943457, nom = "Catch Brainrots From River" },
+    { universeId = 9694950178, nom = "Slide For Brainrots" },
+    { universeId = 9671135973, nom = "Glide for Brainrots" },
+    { universeId = 9676360773, nom = "Sail For Brainrots!" },
+    { universeId = 9604810345, nom = "Escape Rising Lava For Brainrots!" },
+    { universeId = 9684872190, nom = "Catch a Brainrot Container" },
+    { universeId = 9550364666, nom = "Survive Disasters for Brainrots!" },
+    { universeId = 9509746595, nom = "Survive HEAT for Brainrots!" },
+    { universeId = 9510293839, nom = "Brainrot Heroes" },
+    { universeId = 9497278040, nom = "My Scamming Brainrots!" },
+    { universeId = 9233317754, nom = "FIND The New BRAINROTS Morphs" },
+    { universeId = 8472682462, nom = "Brainrot BOSS — Hold the Last Line!" },
+    { universeId = 8343243056, nom = "Brainrot Tower Defense" },
+    { universeId = 8015734617, nom = "Steal Brainrots Trading Plaza" },
+    { universeId = 8842956505, nom = "Brainrot Royale" },
+    { universeId = 7674469859, nom = "Brainrot Tower" },
+    { universeId = 7332711118, nom = "Brainrot Evolution" },
+    { universeId = 7143545906, nom = "Enter Brainrot" },
+    { universeId = 7950997475, nom = "Blue Lock: Skibidi" },
+    { universeId = 9296252245, nom = "Phonk Edit Tower" },
+    { universeId = 8902327228, nom = "Aura Phonk Edit Tower" },
+    { universeId = 9751615286, nom = "Ultra Toilet Fight 2" },
+    { universeId = 7893515528, nom = "My Singing Brainrot" },
+    { universeId = 9517544700, nom = "Escape Tower For Brainrots!" },
+    { universeId = 9594335382, nom = "Steal From Gatito" },
+    { universeId = 5530781226, nom = "UGC Steal Points" },
 }
 
 -- ------------------------------------------------------------
@@ -31,17 +68,6 @@ local CACHE_TTL      = 300  -- 5 minutes
 -- ------------------------------------------------------------
 -- UTILITAIRES
 -- ------------------------------------------------------------
-
--- Vérifie si un nom de jeu contient un mot-clé Brain Rot
-local function estBrainRot(nom)
-    local nomLower = string.lower(nom)
-    for _, kw in ipairs(KEYWORDS) do
-        if string.find(nomLower, kw, 1, true) then
-            return true
-        end
-    end
-    return false
-end
 
 local function getStatut(score)
     if score >= 7 then return "🔥 VIRAL"
@@ -64,41 +90,38 @@ local function calculerScore(joueurs, upVotes, downVotes, visites)
 end
 
 -- ------------------------------------------------------------
--- FETCH TOP 100 JEUX
--- GET https://games.roblox.com/v1/games/list?sortToken=CuratedGames&maxRows=100
--- Retourne un tableau de { universeId, nom, joueurs, visites, rootPlaceId }
+-- FETCH INFOS JEUX (joueurs actifs, visites, nom officiel)
+-- GET /v1/games?universeIds=X,Y,Z
+-- Retourne une table indexée par universeId (string)
 -- ------------------------------------------------------------
-local function fetchTop100()
-    local url = PROXY .. "/v1/games/list?sortToken=CuratedGames&maxRows=100"
+local function fetchInfos(universeIds)
+    if #universeIds == 0 then return {} end
+    local url = PROXY .. "/v1/games?universeIds=" .. table.concat(universeIds, ",")
     local ok, response = pcall(function()
         return HttpService:GetAsync(url, true)
     end)
     if not ok then
-        warn("[DataFetcher] Erreur fetch top 100 : " .. tostring(response))
+        warn("[DataFetcher] Erreur fetch infos : " .. tostring(response))
         return {}
     end
     local okJson, data = pcall(function() return HttpService:JSONDecode(response) end)
-    if not okJson or not data or not data.games then
-        warn("[DataFetcher] Réponse inattendue du top 100")
-        return {}
-    end
+    if not okJson or not data or not data.data then return {} end
 
-    local jeux = {}
-    for _, g in ipairs(data.games) do
-        table.insert(jeux, {
-            universeId  = g.universeId,
+    local result = {}
+    for _, g in ipairs(data.data) do
+        result[tostring(g.id)] = {
             nom         = g.name or "Sans nom",
-            joueurs     = g.playerCount or 0,
-            visites     = g.totalVisits or 0,
+            joueurs     = g.playing or 0,
+            visites     = g.visits or 0,
             rootPlaceId = g.rootPlaceId or 0,
-        })
+        }
     end
-    return jeux
+    return result
 end
 
 -- ------------------------------------------------------------
 -- FETCH VOTES
--- GET https://games.roblox.com/v1/games/votes?universeIds=X,Y,Z
+-- GET /v1/games/votes?universeIds=X,Y,Z
 -- Retourne une table indexée par universeId (string)
 -- ------------------------------------------------------------
 local function fetchVotes(universeIds)
@@ -128,68 +151,50 @@ end
 -- FETCH COMPLET
 -- ------------------------------------------------------------
 local function fetchAll()
-    print("[DataFetcher] 🔄 Fetch automatique top 100 Roblox...")
+    print(string.format("[DataFetcher] 🔄 Fetch stats pour %d jeux Brain Rot...", #JEUX_TRACKED))
 
-    -- Étape 1 : Récupérer les 100 jeux les plus populaires
-    local top100 = fetchTop100()
-    if #top100 == 0 then
-        warn("[DataFetcher] ⚠️ Aucun jeu récupéré depuis l'API")
-        return cache  -- garder le cache précédent
-    end
-
-    -- Étape 2 : Filtrer les jeux Brain Rot
-    local brainRotJeux = {}
-    for _, jeu in ipairs(top100) do
-        if estBrainRot(jeu.nom) then
-            table.insert(brainRotJeux, jeu)
+    -- Construire la liste des universeIds (sans doublons)
+    local universeIds = {}
+    local idToConfig  = {}
+    for _, jeu in ipairs(JEUX_TRACKED) do
+        local idStr = tostring(jeu.universeId)
+        if not idToConfig[idStr] then
+            table.insert(universeIds, idStr)
+            idToConfig[idStr] = jeu
         end
     end
 
-    -- Fallback : si aucun Brain Rot trouvé, garder les 16 plus joués sans filtre
-    local source   = brainRotJeux
-    local fallback = false
-    if #brainRotJeux == 0 then
-        warn("[DataFetcher] ⚠️ Aucun jeu Brain Rot trouvé — fallback top 16 sans filtre")
-        source   = top100
-        fallback = true
-    end
-
-    -- Étape 3 : Construire la liste des universeIds pour les votes
-    local universeIds = {}
-    local idToJeu     = {}
-    for _, jeu in ipairs(source) do
-        local idStr = tostring(jeu.universeId)
-        table.insert(universeIds, idStr)
-        idToJeu[idStr] = jeu
-    end
-
-    -- Étape 4 : Récupérer les votes pour les jeux filtrés
+    -- Fetch infos et votes en parallèle (deux appels HTTP)
+    local infosData = fetchInfos(universeIds)
     local votesData = fetchVotes(universeIds)
 
-    -- Étape 5 : Calculer les scores
+    -- Calculer les scores
     local resultats = {}
-    for idStr, jeu in pairs(idToJeu) do
-        local vData     = votesData[idStr] or {}
-        local upVotes   = vData.upVotes or 0
-        local downVotes = vData.downVotes or 0
+    for idStr, config in pairs(idToConfig) do
+        local info      = infosData[idStr] or {}
+        local vote      = votesData[idStr] or {}
+        local joueurs   = info.joueurs or 0
+        local visites   = info.visites or 0
+        local upVotes   = vote.upVotes or 0
+        local downVotes = vote.downVotes or 0
         local totalV    = upVotes + downVotes
         local likeRatio = totalV > 0 and math.floor((upVotes / totalV) * 100) or 50
 
         table.insert(resultats, {
-            universeId  = jeu.universeId,
-            gameId      = jeu.rootPlaceId,
-            nom         = jeu.nom,
-            joueurs     = jeu.joueurs,
-            visites     = jeu.visites,
+            universeId  = config.universeId,
+            gameId      = info.rootPlaceId or 0,
+            nom         = info.nom or config.nom,  -- nom officiel depuis API
+            joueurs     = joueurs,
+            visites     = visites,
             upVotes     = upVotes,
             downVotes   = downVotes,
             likeRatio   = likeRatio,
-            score       = calculerScore(jeu.joueurs, upVotes, downVotes, jeu.visites),
+            score       = calculerScore(joueurs, upVotes, downVotes, visites),
             statut      = "",  -- rempli après tri
         })
     end
 
-    -- Étape 6 : Trier par score décroissant, garder les 16 meilleurs
+    -- Trier par score décroissant, garder les 16 meilleurs
     table.sort(resultats, function(a, b) return a.score > b.score end)
 
     local top16 = {}
@@ -205,8 +210,8 @@ local function fetchAll()
 
     local top = top16[1]
     if top then
-        print(string.format("[DataFetcher] ✅ %d jeux Brain Rot%s — #1 : %s (score %.2f, %d joueurs)",
-            #top16, fallback and " (fallback)" or "", top.nom, top.score, top.joueurs))
+        print(string.format("[DataFetcher] ✅ Top 16 — #1 : %s (score %.2f, %d joueurs)",
+            top.nom, top.score, top.joueurs))
     end
 
     return top16
@@ -215,6 +220,7 @@ end
 -- ------------------------------------------------------------
 -- API PUBLIQUE
 -- ------------------------------------------------------------
+local DataFetcher = {}
 
 -- Retourne le cache (fetch si expiré)
 function DataFetcher.getCache()
