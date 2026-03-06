@@ -18,5 +18,9 @@ Thumbs.db
 .env
 .env.*
 
+# Node.js (Puppeteer / scripts utilitaires)
+node_modules/
+package-lock.json
+
 # Claude Code local settings
 .claude/
