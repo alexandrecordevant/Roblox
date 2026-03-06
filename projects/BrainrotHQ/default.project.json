@@ -25,6 +25,9 @@
       },
       "TeleportHandler": {
         "$path": "src/ServerScriptService/TeleportHandler.lua"
+      },
+      "ScreenUpdater": {
+        "$path": "src/ServerScriptService/ScreenUpdater.lua"
       }
     },
     "StarterPlayer": {
